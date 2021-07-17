@@ -1,0 +1,723 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<analysis version="2">
+    <inputs>
+        <input pattern="/resultfiles/example_mm1/MM1-*.vec"/>
+        <input pattern="/resultfiles/example_mm1/MM1-*.sca"/>
+    </inputs>
+    <charts>
+        <chart icon="icons/full/obj/scatterchart.png" id="2203" name="Bootstrapcb Plot" template="bootstrapcb_plot" type="MATPLOTLIB">
+            <script>
+                <![CDATA[import math
+import numpy as np
+from scipy.stats import norm, expon, gamma, rv_continuous
+from omnetpp.scave import results, chart, utils, plot, vectorops as ops
+from bootstrapcb import bootstrapcbModel
+
+# get chart properties
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+# collect parameters for query
+filter_expression = props["filter"]
+start_time = float(props["vector_start_time"] or -math.inf)
+end_time = float(props["vector_end_time"] or math.inf)
+
+# collect data
+try:
+    df = results.get_vectors(filter_expression, include_attrs=True, include_itervars=True)
+except ValueError as e:
+    plot.set_warning("Error while querying results: " + str(e))
+    exit(1)
+
+if df.empty:
+    plot.set_warning("The result filter returned no data.")
+    exit(1)
+
+##################################################
+# parse functions in probs to look like this:
+#
+# class model(bootstrapcbModel):
+#   # local distribution class
+#   def __init__(self, endog, exog=None, start_params=None)
+#     self.dist = norm
+#     super(model, self).__init__(endog=endog, exog=exog, start_params=start_params)
+#
+#   or
+#
+#   # local distribution class
+#   class distribution(rv_continuous):     
+#     def _cdf(self, x, mu, sigma):
+#       a = mu**2 / sigma**2
+#       b = sigma**2 / mu
+#       return gamma.cdf(x, a, scale=b) 
+#     def _pdf(self, x, mu, sigma):
+#       a = mu**2 / sigma**2
+#       b = sigma**2 / mu
+#       return gamma.pdf(x, a, scale=b) 
+#     def _argcheck(self, mu, sigma):
+#       return sigma >= 0
+# 
+#   # function for which the confidence band is to be calculated
+#   def display_func(self, x, *args, **kwds):
+#     return self.cdf(x, *args, **kwds)
+#
+params_str = props["params"]
+distribution_type_str = props["distribution_type"]
+cdf_str = props["cdf"] 
+pdf_str = props["pdf"]
+argcheck_str = props["argcheck"]
+test_str = props["test"]
+method_str = props["method"]
+f_str = props["display_func"]
+if not cdf_str and not pdf_str: 
+    plot.set_warning("Distribution not defined")
+    exit(1)
+# parse theta0
+if params_str:
+    parsed_params, theta0_str = params_str.split(" = ")
+    theta0 = eval('['+theta0_str+']')
+parsed_code             =   "class model(bootstrapcbModel):\n"  
+
+if distribution_type_str == "custom":
+    parsed_code        +=   "  class distribution(rv_continuous):\n" 
+    # parse cdf 
+    if cdf_str: 
+        code = cdf_str.split("\n")
+        parsed_code     +=  "    def _cdf(self, x, {}):\n".format(parsed_params)
+        for line in code: 
+            parsed_code +=  "      "+line+"\n"
+    # parse pdf 
+    if pdf_str: 
+        code = pdf_str.split("\n")
+        parsed_code     +=  "    def _pdf(self, x, {}):\n".format(parsed_params) 
+        for line in code: 
+            parsed_code +=  "      "+line+"\n"
+    # parse argcheck
+    if argcheck_str: 
+        code = argcheck_str.split("\n")
+        parsed_code     +=  "    def _argcheck(self, {}):\n".format(parsed_params) 
+        for line in code: 
+            parsed_code +=  "      "+line+"\n"
+else:
+    parsed_code         +=( "  def __init__(self, endog, exog=None, start_params=None):\n"
+                        +   "    self.dist = {}\n".format(distribution_type_str)
+                        +   "    super(model, self).__init__(endog=endog, exog=exog, start_params=start_params)\n" )
+
+parsed_code         +=  "\n"
+# parse display_func
+if f_str:
+    code = f_str.split("\n")
+    parsed_code         +=  "  def display_func(self, x, *args, **kwds):\n"
+    for line in code: 
+        parsed_code     +=  "    "+line+"\n"
+exec(parsed_code) 
+# parse test
+if test_str == "Chi2 quantiles":
+    test = "approx"
+elif test_str == "Wald-statistic":
+    test = "w"
+elif test_str == "Studentized wald-statistic":
+    test = "studw"
+elif test_str == "Likelihood-ratio-statistic":
+    test = "lr"
+# parse method
+if method_str == "Delta method":
+    method = "delta"
+elif method_str == "Nelder-mead optimization":
+    method = "nm"
+elif method_str == "Uniform points on confindence region":
+    method = "mc"
+    
+print("params: " + parsed_params)
+print("start_params: {}".format(theta0))
+print(parsed_code)
+print(test)
+print(method)
+##################################################
+
+# plot confband, we only support plotting one vector
+if len(df.index) > 1:
+    plot.set_warning("Filter has too many values.")
+    exit(1)
+    
+values = df.iloc[0]["vecvalue"]
+tmpModle = model(values, start_params=theta0)
+tmpResults = tmpModle.fit()
+tmpMle = tmpResults.params
+print(tmpResults.summary())
+
+xs = np.linspace(tmpResults.model.ppf(0.01, *tmpMle), 
+                 tmpResults.model.ppf(0.99, *tmpMle), 50)
+ecdf        = tmpResults.model.ecdf(xs)
+plot.plot(xs, ecdf, label='empirical distribution', 
+                            drawstyle='steps-post')
+fitted_func = tmpResults.mle(xs)
+plot.plot(xs, fitted_func,    label='fitted distribution')
+confband    = tmpResults.confband(xs, alpha=0.1, nrep=100, parametric=True,
+                                  test=test, method=method)
+plot.plot(xs, confband[:, 0], label='confidence band',
+                              color='green', linestyle='--')
+plot.plot(xs, confband[:, 1], color='green', linestyle='--')
+
+utils.postconfigure_plot(props)
+
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(df, props)]]>
+            </script>
+            <dialogPage id="Input" label="Input">
+                <![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang" />
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+  </import>
+  <layout x:class="GridLayout" numColumns="1" />
+  <x:children>
+    <label text="Filter expression:" />
+    <styledText x:id="filter" x:style="BORDER|V_SCROLL|H_SCROLL" x:id.contentAssist="filter" x:id.resultType="vector">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+    </styledText>
+    <button x:id="simplify" x:style="PUSH" text="Simplify" x:id.role="simplify" x:id.targetControl="filter">
+      <layoutData x:class="GridData" horizontalAlignment="END" />
+    </button>
+    <composite>
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" />
+      <layout x:class="GridLayout" numColumns="2" makeColumnsEqualWidth="false" />
+      <x:children>
+        <group text="Vector operations (one per line)">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+          <layout x:class="GridLayout" numColumns="1" />
+          <x:children>
+            <text x:id="vector_operations" x:style="BORDER|MULTI|V_SCROLL|H_SCROLL" x:id.contentAssist="vectorops">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+            </text>
+          </x:children>
+        </group>
+        <group text="Crop interval">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="false" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+          <layout x:class="GridLayout" numColumns="2" />
+          <x:children>
+            <label text="Start time (sec):" />
+            <text x:id="vector_start_time" x:style="BORDER">
+              <layoutData x:class="GridData" widthHint="120" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false" />
+            </text>
+            <label text="End time (sec):" />
+            <text x:id="vector_end_time" x:style="BORDER">
+              <layoutData x:class="GridData" widthHint="120" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false" />
+            </text>
+          </x:children>
+        </group>
+      </x:children>
+    </composite>
+  </x:children>
+</xswt>
+]]>
+            </dialogPage>
+            <dialogPage id="Confidence band" label="Confidence band">
+                <![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2"/>
+
+  <x:children>
+
+    <group text="Parametric Model">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="1"/>
+      <x:children>
+
+        <composite>
+          <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+          <layout x:class="GridLayout" numColumns="3"/>
+          <x:children>
+            <label text="Parameters:" />
+            <styledText x:id="params" x:style="BORDER|V_SCROLL">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false" />
+            </styledText>      
+            <combo x:id="distribution_type" x:id.default="custom" x:style="BORDER|READ_ONLY">
+              <add x:p0="custom"/>
+              <add x:p0="norm"/>
+              <add x:p0="gamma"/>
+              <add x:p0="expon"/>
+            </combo>  
+          </x:children>
+        </composite>
+
+        <label text="def f(x, *args, **kwds): # Display function" />
+        <styledText x:id="display_func" x:style="BORDER|V_SCROLL|H_SCROLL">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+        </styledText>
+
+        <composite>
+          <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true"/>
+          <layout x:class="GridLayout" numColumns="3"/>
+          <x:children>
+            <label text="def cdf(x, 'params'):" />
+            <label text="def pdf(x, 'params'):" />
+            <label text="def argcheck('params'):" />
+            <styledText x:id="cdf" x:style="BORDER|V_SCROLL|H_SCROLL">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+            </styledText>  
+            <styledText x:id="pdf" x:style="BORDER|V_SCROLL|H_SCROLL">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+            </styledText> 
+            <styledText x:id="argcheck" x:style="BORDER|V_SCROLL|H_SCROLL">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+            </styledText> 
+          </x:children>
+        </composite>
+        
+      </x:children>
+    </group>
+
+    <group text="Confidence Band">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+        <label text="Confidence level:"/>
+        <combo x:id="confidence_level" x:id.default="90%" x:style="BORDER|READ_ONLY">
+          <add x:p0="none"/>
+          <add x:p0="80%"/>
+          <add x:p0="85%"/>
+          <add x:p0="90%"/>
+          <add x:p0="95%"/>
+          <add x:p0="99.5%"/>
+          <add x:p0="99.9%"/>
+        </combo>
+
+        <label text="Test:"/>
+        <combo x:id="test" x:id.default="Wald-statistic" x:style="BORDER|READ_ONLY">
+          <add x:p0="Chi2 quantiles"/>
+          <add x:p0="Wald-statistic"/>
+          <add x:p0="Studentized wald-statistic"/>
+          <add x:p0="Likelihood-ratio-statistic"/>
+        </combo>
+
+        <label text="Method:"/>
+        <combo x:id="method" x:id.default="Nelder-mead optimization" x:style="BORDER|READ_ONLY">
+          <add x:p0="Delta method"/>
+          <add x:p0="Nelder-mead optimization"/>
+          <add x:p0="Uniform points on confindence region"/>
+        </combo>
+
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
+]]>
+            </dialogPage>
+            <dialogPage id="Plot" label="Plot">
+                <![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2" makeColumnsEqualWidth="true"/>
+
+  <x:children>
+
+    <group text="Title">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- Plot title -->
+    <label text="Plot title:"/>
+    <text x:id="title" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- X Axis { -->
+    <group text="X axis">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <label text="Label:"/>
+    <text x:id="xaxis_title" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <label text="Min:"/>
+    <text x:id="xaxis_min" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <label text="Max:"/>
+    <text x:id="xaxis_max" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <button x:id="xaxis_log" x:id.default="false" text="Logarithmic" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Y Axis { -->
+    <group text="Y axis">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <label text="Label:"/>
+    <text x:id="yaxis_title" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <label text="Min:"/>
+    <text x:id="yaxis_min" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <label text="Max:"/>
+    <text x:id="yaxis_max" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <button x:id="yaxis_log" x:id.default="false" text="Logarithmic" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Grid { -->
+    <group text="Grid">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- Display Legend? -->
+    <button x:id="grid_show" x:id.default="true" text="Show grid" x:style="CHECK" x:id.isEnabler="true">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- Show grid:None/Major/All -->
+    <label text="Density:"/>
+    <combo x:id="grid_density" x:id.default="Major" x:style="BORDER|READ_ONLY">
+      <add x:p0="Major"/>
+      <add x:p0="All"/>
+    </combo>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Legend { -->
+    <group text="Legend">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- Display Legend? -->
+    <button x:id="legend_show" x:id.default="true" text="Show legend" x:style="CHECK" x:id.isEnabler="true" >
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- Display titles or names? -->
+    <label text="Label source:"/>
+    <combo x:id="legend_labels" x:id.default="result titles" x:style="BORDER|READ_ONLY">
+      <add x:p0="result names"/>
+      <add x:p0="result titles"/>
+    </combo>
+
+    <!-- Placement -->
+    <label text="Placement:"/>
+    <combo x:id="legend_placement" x:id.default="upper right" x:style="BORDER|READ_ONLY">
+      <add x:p0="best"/>
+      <add x:p0="upper right"/>
+      <add x:p0="upper left"/>
+      <add x:p0="lower left"/>
+      <add x:p0="lower right"/>
+      <add x:p0="right"/>
+      <add x:p0="center left"/>
+      <add x:p0="center right"/>
+      <add x:p0="lower center"/>
+      <add x:p0="upper center"/>
+      <add x:p0="center"/>
+      <add x:p0="outside top left"/>
+      <add x:p0="outside top center"/>
+      <add x:p0="outside top right"/>
+      <add x:p0="outside bottom left"/>
+      <add x:p0="outside bottom center"/>
+      <add x:p0="outside bottom right"/>
+      <add x:p0="outside left top"/>
+      <add x:p0="outside left center"/>
+      <add x:p0="outside left bottom"/>
+      <add x:p0="outside right top"/>
+      <add x:p0="outside right center"/>
+      <add x:p0="outside right bottom"/>
+    </combo>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
+]]>
+            </dialogPage>
+            <dialogPage id="Styling" label="Styling">
+                <![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2"/>
+
+  <x:children>
+
+    <!-- Style { -->
+    <group text="Style">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <label text="Style:"/>
+    <combo x:id="plt.style"  x:id.default="default" x:style="BORDER">
+      <add x:p0="default"/>
+      <add x:p0="classic"/>
+      <add x:p0="ggplot"/>
+      <add x:p0="grayscale"/>
+      <add x:p0="dark_background"/>
+      <add x:p0="bmh"/>
+      <add x:p0="fast"/>
+      <add x:p0="fivethirtyeight"/>
+      <add x:p0="tableau-colorblind10"/>
+      <add x:p0="Solarize_Light2"/>
+      <add x:p0="seaborn"/>
+      <add x:p0="seaborn-bright"/>
+      <add x:p0="seaborn-colorblind"/>
+      <add x:p0="seaborn-dark"/>
+      <add x:p0="seaborn-darkgrid"/>
+      <add x:p0="seaborn-dark-palette"/>
+      <add x:p0="seaborn-deep"/>
+      <add x:p0="seaborn-muted"/>
+      <add x:p0="seaborn-notebook"/>
+      <add x:p0="seaborn-paper"/>
+      <add x:p0="seaborn-pastel"/>
+      <add x:p0="seaborn-poster"/>
+      <add x:p0="seaborn-talk"/>
+      <add x:p0="seaborn-ticks"/>
+      <add x:p0="seaborn-white"/>
+      <add x:p0="seaborn-whitegrid"/>
+    </combo>
+
+    <label text="Cycle seed:"/>
+    <spinner x:id="cycle_seed" x:id.default="0" selection="0" minimum="0" maximum="1000000" x:style="BORDER"/>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Colors { -->
+    <group text="Colors">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- backgroundColor -->
+    <label text="Figure background color:"/>
+    <ColorChooser x:id="matplotlibrc.figure.facecolor" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </ColorChooser>
+
+    <label text="Axes background color:"/>
+    <ColorChooser x:id="matplotlibrc.axes.facecolor" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </ColorChooser>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+
+    <!-- Legend { -->
+    <group text="Legend">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <button x:id="matplotlibrc.legend.frameon" x:id.default="true" text="Frame" x:style="CHECK"  x:id.isEnabler="true">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <button x:id="matplotlibrc.legend.fancybox" x:id.default="false" text="Fancybox" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <button x:id="matplotlibrc.legend.shadow" x:id.default="false" text="Shadow" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+
+  </x:children>
+</xswt>
+]]>
+            </dialogPage>
+            <dialogPage id="Advanced" label="Advanced">
+                <![CDATA[<?xml version='1.0' encoding='UTF-8'?>
+<xswt xmlns:x='http://sweet_swt.sf.net/xswt'>
+  <import xmlns='http://sweet_swt.sf.net/xswt'>
+    <package name='java.lang'/>
+    <package name='org.eclipse.swt.widgets' />
+    <package name='org.eclipse.swt.graphics' />
+    <package name='org.eclipse.swt.layout' />
+    <package name='org.eclipse.swt.custom' />
+  </import>
+  <layout x:class='GridLayout' numColumns='1'/>
+  <x:children>
+    <label text="Here you can further customize the plot using matplotlibrc properties."/>
+    <label text="The syntax is one entry per line in the 'key : value' format; comments (#) are also accepted."/>
+    <label text="Content Assist available (hit Ctrl+Space)."/>
+    <styledText x:id="matplotlibrc" x:style="BORDER|V_SCROLL|H_SCROLL" x:id.contentAssist="matplotlibrc">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true"/>
+    </styledText>
+  </x:children>
+</xswt>
+]]>
+            </dialogPage>
+            <dialogPage id="Export" label="Export">
+                <![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2"/>
+
+  <x:children>
+
+    <group text="Image export">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+        <label text="Image file name (w/o extension):"/>
+        <text x:id="image_export_filename" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+        <label text="Image width (inches):"/>
+        <text x:id="image_export_width" x:id.default="6" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+        <label text="Image height (inches):"/>
+        <text x:id="image_export_height" x:id.default="4" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+      </x:children>
+    </group>
+
+    <group text="Data export">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+        <label text="File name (w/o extension):"/>
+        <text x:id="data_export_filename" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
+]]>
+            </dialogPage>
+            <property name="matplotlibrc.legend.frameon" value="true"/>
+            <property name="matplotlibrc.legend.fancybox" value="false"/>
+            <property name="grid_show" value="true"/>
+            <property name="vector_end_time" value=""/>
+            <property name="confidence_level" value="90%"/>
+            <property name="matplotlibrc.figure.facecolor" value=""/>
+            <property name="legend_labels" value="result titles"/>
+            <property name="yaxis_title" value=""/>
+            <property name="title" value=""/>
+            <property name="argcheck" value="return sigma &gt;= 0"/>
+            <property name="vector_operations" value=""/>
+            <property name="cycle_seed" value="0"/>
+            <property name="yaxis_log" value="false"/>
+            <property name="image_export_height" value="4"/>
+            <property name="xaxis_log" value="false"/>
+            <property name="display_func" value="return self.cdf(x, *args, **kwds)"/>
+            <property name="legend_placement" value="upper right"/>
+            <property name="cdf" value="a = mu**2 / sigma**2&#10;b = sigma**2 / mu&#10;return gamma.cdf(x, a, scale=b)"/>
+            <property name="test" value="Wald-statistic"/>
+            <property name="method" value="Nelder-mead optimization"/>
+            <property name="data_export_filename" value=""/>
+            <property name="xaxis_title" value=""/>
+            <property name="grid_density" value="Major"/>
+            <property name="yaxis_min" value=""/>
+            <property name="image_export_filename" value=""/>
+            <property name="params" value="mu, sigma = 1, 1"/>
+            <property name="xaxis_min" value=""/>
+            <property name="matplotlibrc.axes.facecolor" value=""/>
+            <property name="filter" value=" name =~ &quot;serviceTime:vector&quot; "/>
+            <property name="vector_start_time" value=""/>
+            <property name="pdf" value="a = mu**2 / sigma**2&#10;b = sigma**2 / mu&#10;return gamma.pdf(x, a, scale=b)"/>
+            <property name="plt.style" value="default"/>
+            <property name="legend_show" value="true"/>
+            <property name="matplotlibrc.legend.shadow" value="false"/>
+            <property name="simplify" value="false"/>
+            <property name="yaxis_max" value=""/>
+            <property name="distribution_type" value="custom"/>
+            <property name="xaxis_max" value=""/>
+            <property name="image_export_width" value="6"/>
+            <property name="matplotlibrc" value=""/>
+        </chart>
+    </charts>
+</analysis>

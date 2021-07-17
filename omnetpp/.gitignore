@@ -1,0 +1,16 @@
+# OMNeT++
+.settings/
+out/
+results/
+datasets/
+.cmdenvrc
+.qtenvrc
+.tkenvrc
+*-log
+*_m.h
+*_m.cc
+
+# Examples
+example_mg1/src/Makefile
+example_mg1/src/example_mg1
+example_mg1/src/example_mg1_dbg

@@ -1,0 +1,5 @@
+# Sonstiges
+.idea/
+.vscode/
+.venv/
+*.tmp

@@ -1,0 +1,39 @@
+#! /bin/bash
+##########################################################################
+# Toolchain for building and running the example: ########################
+##########################################################################
+
+##########################################################################
+# uncomment to build or rebuild ##########################################
+##########################################################################
+# echo "Clearing build..."
+# make cleanall
+# echo "Building the example..."
+# make makefiles
+# make
+##########################################################################
+
+echo; \
+echo; \
+echo '======================================================================='; \
+echo 'Example of an Single Server Queue'; \
+echo '======================================================================='; \
+echo; \
+cd "simulations/"
+
+echo "Clearing previous results..."
+rm -rf results/
+
+echo "Running the MM1 simulation..."
+../src/example_mg1 -uCmdenv -cMM1 -n".;../src" $*
+
+echo "Exporting results to csv..." 
+scavetool x -f 'name("serviceTime:vector")' -o ./datasets/analysis_serviceTime.csv ./results/MM1*.sca ./results/MM1*.vec
+scavetool x -f 'name("queueingTime:vector")' -o ./datasets/analysis_D.csv ./results/MM1*.sca ./results/MM1*.vec
+scavetool x -f 'name("waitingTime:vector")' -o ./datasets/analysis_W.csv ./results/MM1*.sca ./results/MM1*.vec
+scavetool x -f 'name("queueLength:vector")' -o ./datasets/analysis_Q.csv ./results/MM1*.sca ./results/MM1*.vec
+scavetool x -f 'name("nCustomers:vector")' -o ./datasets/analysis_L.csv ./results/MM1*.sca ./results/MM1*.vec
+
+echo "Running python scrip..." 
+python3 analysis.py
+cd "../"

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2"/>
+
+  <x:children>
+
+    <group text="Parametric Model">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="1"/>
+      <x:children>
+
+        <composite>
+          <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+          <layout x:class="GridLayout" numColumns="3"/>
+          <x:children>
+            <label text="Parameters:" />
+            <styledText x:id="params" x:style="BORDER|V_SCROLL">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false" />
+            </styledText>      
+            <combo x:id="distribution_type" x:id.default="custom" x:style="BORDER|READ_ONLY">
+              <add x:p0="custom"/>
+              <add x:p0="norm"/>
+              <add x:p0="gamma"/>
+              <add x:p0="expon"/>
+            </combo>  
+          </x:children>
+        </composite>
+
+        <label text="def f(x, *args, **kwds): # Display function" />
+        <styledText x:id="display_func" x:style="BORDER|V_SCROLL|H_SCROLL">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+        </styledText>
+
+        <composite>
+          <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true"/>
+          <layout x:class="GridLayout" numColumns="3"/>
+          <x:children>
+            <label text="def cdf(x, 'params'):" />
+            <label text="def pdf(x, 'params'):" />
+            <label text="def argcheck('params'):" />
+            <styledText x:id="cdf" x:style="BORDER|V_SCROLL|H_SCROLL">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+            </styledText>  
+            <styledText x:id="pdf" x:style="BORDER|V_SCROLL|H_SCROLL">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+            </styledText> 
+            <styledText x:id="argcheck" x:style="BORDER|V_SCROLL|H_SCROLL">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+            </styledText> 
+          </x:children>
+        </composite>
+        
+      </x:children>
+    </group>
+
+    <group text="Confidence Band">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+        <label text="Confidence level:"/>
+        <combo x:id="confidence_level" x:id.default="90%" x:style="BORDER|READ_ONLY">
+          <add x:p0="none"/>
+          <add x:p0="80%"/>
+          <add x:p0="85%"/>
+          <add x:p0="90%"/>
+          <add x:p0="95%"/>
+          <add x:p0="99.5%"/>
+          <add x:p0="99.9%"/>
+        </combo>
+
+        <label text="Test:"/>
+        <combo x:id="test" x:id.default="Wald-statistic" x:style="BORDER|READ_ONLY">
+          <add x:p0="Chi2 quantiles"/>
+          <add x:p0="Wald-statistic"/>
+          <add x:p0="Studentized wald-statistic"/>
+          <add x:p0="Likelihood-ratio-statistic"/>
+        </combo>
+
+        <label text="Method:"/>
+        <combo x:id="method" x:id.default="Nelder-mead optimization" x:style="BORDER|READ_ONLY">
+          <add x:p0="Delta method"/>
+          <add x:p0="Nelder-mead optimization"/>
+          <add x:p0="Uniform points on confindence region"/>
+        </combo>
+
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
