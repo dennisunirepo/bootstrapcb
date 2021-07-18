@@ -42,7 +42,6 @@ iar, sr = 1/ia, 1/s
 shape, scale = 1, 1/(sr - iar)
 theta_0 = [shape*scale, np.sqrt(shape)*scale] 
 path = "datasets/"
-path = "D:/Dennis/Desktop/BA/unirepoabgabe/omnetpp/example_mg1/simulations/datasets/"
 sim_runs_dataset = "analysis_W.csv"
 bootstrapcb_dataset = "simstudy_W_gamma_mu_sigma.json"
 simstudy_dataset = "simstudy_W_gamma_mu_sigma.txt"
