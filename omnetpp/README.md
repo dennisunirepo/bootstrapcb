@@ -1,0 +1,9 @@
+In order to build and run the simulation, you may need to make the './run' file an executable. You can do this by entering 
+```
+sudo chmod +x run
+```
+Additionally, for the analysis Python scripts to work, the bootstrapcb package must be added to the PYTHONPATH.
+
+Now the 'src' folder contains mainly C++ files that implement the behavior of the simulation. These are to some extent inspired by implementations of <cite>[Kriege1 and Buchholz (2012)][1]</cite> , who show how using stochastic processes instead of distributions in simulations can improve the simulation output. Moreover, the FIFO example of the INET library already provides an implementation of a simple queueing system, which was also used as a basis for our work. The simulation study takes place under the 'simulations' directory. The Python scripts are to be started directly from here and after exporting the simulation results to CSV files under the directory 'datasets' was done. When these scripts are first run, methods such as 'generate_bs_dataset' must be commented out to generate JSON files that are used to temporarily store the results of the bootstrapping process. Bootstrapping long simulation runs and with many bootstrap iterations, say 1000, can take a quite a while. Therefore, it is useful to have them so that you do not have to run the resampling process each time you rerun the script. The tool.py script can additionally be used to display the simulation results more compactly under the console output. It is important to note that this is mainly intended as an experimental project and for testing our bootstrap algorithms. Using the scripts may require customization in some cases. We have tried to structure this project in a very intuitive way, but since it is a work in progress, there is not much to comment here yet.
+
+[1]: http://dx.doi.org/10.4108/icst.simutools.2011.245512
